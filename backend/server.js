@@ -3,27 +3,61 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const path = require('path');
-require('dotenv').config();
-
-const { pool, testConnection } = require('./config/database');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const JWT_SECRET = process.env.JWT_SECRET || 'monster_gym_neon_secret_2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'monster_gym_secret_2024';
 
-// Middleware para producción
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
-}));
-
+app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'frontend')));
 
-// Servir archivos estáticos del frontend
-app.use(express.static(path.join(__dirname, '../frontend')));
+// DATOS EN MEMORIA (SIN BASE DE DATOS)
+let products = [
+  { 
+    id: 1, 
+    nombre: "Proteína Monster Whey", 
+    descripcion: "Proteína de suero de leche premium", 
+    precio: 59.99, 
+    stock: 50, 
+    categoria: "suplementos", 
+    imagen_url: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=400" 
+  },
+  { 
+    id: 2, 
+    nombre: "Creatina Monohidrato", 
+    descripcion: "Creatina pura para aumentar fuerza", 
+    precio: 29.99, 
+    stock: 30, 
+    categoria: "suplementos", 
+    imagen_url: "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400" 
+  },
+  { 
+    id: 3, 
+    nombre: "Guantes de Levantamiento", 
+    descripcion: "Guantes acolchados con soporte", 
+    precio: 24.99, 
+    stock: 20, 
+    categoria: "accesorios", 
+    imagen_url: "https://images.unsplash.com/photo-1571019614244-c5c476de34a1?w=400" 
+  }
+];
 
-// Middleware de autenticación
+let users = [
+  { 
+    id: 1, 
+    nombre: "Administrador", 
+    email: "admin@monstergym.com", 
+    password: "$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi", // password
+    tipo_usuario: "admin" 
+  }
+];
+
+let cart = [];
+let sales = [];
+let nextId = 4;
+
+// MIDDLEWARE DE AUTENTICACIÓN
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -50,25 +84,23 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Todos los campos son requeridos' });
     }
 
-    const userExists = await pool.query(
-      'SELECT * FROM usuarios WHERE email = $1',
-      [email]
-    );
-
-    if (userExists.rows.length > 0) {
+    if (users.find(user => user.email === email)) {
       return res.status(400).json({ error: 'El usuario ya existe' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = {
+      id: users.length + 1,
+      nombre,
+      email,
+      password: hashedPassword,
+      tipo_usuario: 'cliente'
+    };
 
-    const result = await pool.query(
-      'INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3) RETURNING id, nombre, email, tipo_usuario',
-      [nombre, email, hashedPassword]
-    );
+    users.push(newUser);
 
-    const user = result.rows[0];
     const token = jwt.sign(
-      { id: user.id, email: user.email, tipo: user.tipo_usuario },
+      { id: newUser.id, email: newUser.email, tipo: newUser.tipo_usuario },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -77,10 +109,10 @@ app.post('/api/register', async (req, res) => {
       message: 'Usuario registrado exitosamente',
       token,
       user: {
-        id: user.id,
-        nombre: user.nombre,
-        email: user.email,
-        tipo: user.tipo_usuario
+        id: newUser.id,
+        nombre: newUser.nombre,
+        email: newUser.email,
+        tipo: newUser.tipo_usuario
       }
     });
   } catch (error) {
@@ -97,16 +129,12 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Email y contraseña son requeridos' });
     }
 
-    const result = await pool.query(
-      'SELECT * FROM usuarios WHERE email = $1',
-      [email]
-    );
+    const user = users.find(u => u.email === email);
 
-    if (result.rows.length === 0) {
+    if (!user) {
       return res.status(400).json({ error: 'Credenciales inválidas' });
     }
 
-    const user = result.rows[0];
     const validPassword = await bcrypt.compare(password, user.password);
     
     if (!validPassword) {
@@ -136,34 +164,17 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==================== RUTAS DE PRODUCTOS ====================
-app.get('/api/productos', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM productos ORDER BY id');
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error obteniendo productos:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+app.get('/api/productos', (req, res) => {
+  res.json(products);
 });
 
 // ==================== RUTAS DEL CARRITO ====================
-app.get('/api/carrito', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT c.id, c.cantidad, p.id as producto_id, p.nombre, p.precio, p.imagen_url, p.stock 
-       FROM carrito c 
-       JOIN productos p ON c.producto_id = p.id 
-       WHERE c.usuario_id = $1`,
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error obteniendo carrito:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+app.get('/api/carrito', authenticateToken, (req, res) => {
+  const userCart = cart.filter(item => item.usuario_id === req.user.id);
+  res.json(userCart);
 });
 
-app.post('/api/carrito', authenticateToken, async (req, res) => {
+app.post('/api/carrito', authenticateToken, (req, res) => {
   try {
     const { producto_id, cantidad } = req.body;
 
@@ -171,34 +182,33 @@ app.post('/api/carrito', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Producto ID y cantidad son requeridos' });
     }
 
-    const producto = await pool.query(
-      'SELECT * FROM productos WHERE id = $1',
-      [producto_id]
-    );
+    const product = products.find(p => p.id === producto_id);
 
-    if (producto.rows.length === 0) {
+    if (!product) {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    if (producto.rows[0].stock < cantidad) {
+    if (product.stock < cantidad) {
       return res.status(400).json({ error: 'Stock insuficiente' });
     }
 
-    const existingItem = await pool.query(
-      'SELECT * FROM carrito WHERE usuario_id = $1 AND producto_id = $2',
-      [req.user.id, producto_id]
+    const existingItemIndex = cart.findIndex(
+      item => item.usuario_id === req.user.id && item.producto_id === producto_id
     );
 
-    if (existingItem.rows.length > 0) {
-      await pool.query(
-        'UPDATE carrito SET cantidad = cantidad + $1 WHERE usuario_id = $2 AND producto_id = $3',
-        [cantidad, req.user.id, producto_id]
-      );
+    if (existingItemIndex !== -1) {
+      cart[existingItemIndex].cantidad += cantidad;
     } else {
-      await pool.query(
-        'INSERT INTO carrito (usuario_id, producto_id, cantidad) VALUES ($1, $2, $3)',
-        [req.user.id, producto_id, cantidad]
-      );
+      cart.push({
+        id: cart.length + 1,
+        usuario_id: req.user.id,
+        producto_id,
+        cantidad,
+        nombre: product.nombre,
+        precio: product.precio,
+        imagen_url: product.imagen_url,
+        stock: product.stock
+      });
     }
 
     res.json({ message: 'Producto agregado al carrito' });
@@ -208,101 +218,103 @@ app.post('/api/carrito', authenticateToken, async (req, res) => {
   }
 });
 
-// ==================== RUTAS DE VENTAS ====================
-app.post('/api/ventas', authenticateToken, async (req, res) => {
-  const client = await pool.connect();
-  
+app.delete('/api/carrito/:id', authenticateToken, (req, res) => {
   try {
-    await client.query('BEGIN');
-
-    const carritoItems = await client.query(
-      `SELECT c.id, c.producto_id, c.cantidad, p.precio, p.stock, p.nombre 
-       FROM carrito c 
-       JOIN productos p ON c.producto_id = p.id 
-       WHERE c.usuario_id = $1`,
-      [req.user.id]
-    );
-
-    if (carritoItems.rows.length === 0) {
-      throw new Error('El carrito está vacío');
+    const { id } = req.params;
+    const itemIndex = cart.findIndex(item => item.id === parseInt(id) && item.usuario_id === req.user.id);
+    
+    if (itemIndex === -1) {
+      return res.status(404).json({ error: 'Item no encontrado' });
     }
 
-    for (const item of carritoItems.rows) {
-      if (item.stock < item.cantidad) {
-        throw new Error(`Stock insuficiente para ${item.nombre}`);
-      }
+    cart.splice(itemIndex, 1);
+    res.json({ message: 'Producto eliminado del carrito' });
+  } catch (error) {
+    console.error('Error eliminando del carrito:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ==================== RUTAS DE VENTAS ====================
+app.post('/api/ventas', authenticateToken, (req, res) => {
+  try {
+    const userCart = cart.filter(item => item.usuario_id === req.user.id);
+
+    if (userCart.length === 0) {
+      return res.status(400).json({ error: 'El carrito está vacío' });
     }
 
     let total = 0;
-    for (const item of carritoItems.rows) {
-      total += item.precio * item.cantidad;
+    for (const item of userCart) {
+      const product = products.find(p => p.id === item.producto_id);
+      if (product.stock < item.cantidad) {
+        return res.status(400).json({ error: `Stock insuficiente para ${product.nombre}` });
+      }
+      total += product.precio * item.cantidad;
     }
 
-    const ventaResult = await client.query(
-      'INSERT INTO ventas (usuario_id, total) VALUES ($1, $2) RETURNING id',
-      [req.user.id, total]
-    );
-
-    const ventaId = ventaResult.rows[0].id;
-
-    for (const item of carritoItems.rows) {
-      await client.query(
-        'INSERT INTO detalle_ventas (venta_id, producto_id, cantidad, precio_unitario) VALUES ($1, $2, $3, $4)',
-        [ventaId, item.producto_id, item.cantidad, item.precio]
-      );
-
-      await client.query(
-        'UPDATE productos SET stock = stock - $1 WHERE id = $2',
-        [item.cantidad, item.producto_id]
-      );
+    // Actualizar stock
+    for (const item of userCart) {
+      const product = products.find(p => p.id === item.producto_id);
+      product.stock -= item.cantidad;
     }
 
-    await client.query('DELETE FROM carrito WHERE usuario_id = $1', [req.user.id]);
-    await client.query('COMMIT');
-    
+    // Crear venta
+    const newSale = {
+      id: sales.length + 1,
+      usuario_id: req.user.id,
+      total,
+      fecha_venta: new Date(),
+      items: [...userCart]
+    };
+
+    sales.push(newSale);
+
+    // Vaciar carrito del usuario
+    cart = cart.filter(item => item.usuario_id !== req.user.id);
+
     res.json({ 
       message: 'Venta realizada exitosamente', 
-      venta_id: ventaId,
+      venta_id: newSale.id,
       total: total
     });
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Error procesando venta:', error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
 // ==================== RUTAS DE ADMINISTRACIÓN ====================
-app.get('/api/admin/ventas', authenticateToken, async (req, res) => {
+app.get('/api/admin/ventas', authenticateToken, (req, res) => {
   try {
     if (req.user.tipo !== 'admin') {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
 
-    const result = await pool.query(
-      `SELECT v.*, u.nombre as usuario_nombre, u.email as usuario_email,
-              (SELECT COUNT(*) FROM detalle_ventas dv WHERE dv.venta_id = v.id) as items
-       FROM ventas v 
-       JOIN usuarios u ON v.usuario_id = u.id 
-       ORDER BY v.fecha_venta DESC`
-    );
-    res.json(result.rows);
+    const salesWithUser = sales.map(sale => {
+      const user = users.find(u => u.id === sale.usuario_id);
+      return {
+        ...sale,
+        usuario_nombre: user ? user.nombre : 'Usuario desconocido',
+        usuario_email: user ? user.email : 'Email desconocido',
+        items: sale.items.length
+      };
+    });
+
+    res.json(salesWithUser);
   } catch (error) {
     console.error('Error obteniendo ventas admin:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-app.get('/api/admin/inventario', authenticateToken, async (req, res) => {
+app.get('/api/admin/inventario', authenticateToken, (req, res) => {
   try {
     if (req.user.tipo !== 'admin') {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
 
-    const result = await pool.query('SELECT * FROM productos ORDER BY id');
-    res.json(result.rows);
+    res.json(products);
   } catch (error) {
     console.error('Error obteniendo inventario:', error);
     res.status(500).json({ error: 'Error del servidor' });
@@ -310,57 +322,28 @@ app.get('/api/admin/inventario', authenticateToken, async (req, res) => {
 });
 
 // ==================== RUTAS DE VERIFICACIÓN ====================
-app.get('/api/test', async (req, res) => {
-  try {
-    const dbTest = await pool.query('SELECT NOW() as time, version() as version');
-    const userCount = await pool.query('SELECT COUNT(*) as users FROM usuarios');
-    const productCount = await pool.query('SELECT COUNT(*) as products FROM productos');
-    
-    res.json({ 
-      message: '✅ Monster Gym API funcionando con Neon.tech',
-      database: {
-        time: dbTest.rows[0].time,
-        version: dbTest.rows[0].version,
-        users: parseInt(userCount.rows[0].users),
-        products: parseInt(productCount.rows[0].products)
-      },
-      environment: process.env.NODE_ENV || 'development'
-    });
-  } catch (error) {
-    console.error('Error en test:', error);
-    res.status(500).json({ error: 'Error conectando a la base de datos' });
-  }
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    message: '✅ Monster Gym API funcionando correctamente',
+    environment: process.env.NODE_ENV || 'production',
+    users: users.length,
+    products: products.length,
+    sales: sales.length
+  });
 });
 
 // Ruta para servir el frontend
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
+  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
 // Inicializar servidor
-const startServer = async () => {
-  try {
-    // Probar conexión a Neon
-    const dbConnected = await testConnection();
-    if (!dbConnected) {
-      console.error('❌ No se pudo conectar a Neon.tech');
-      process.exit(1);
-    }
-
-    app.listen(PORT, () => {
-      console.log('🚀 ==========================================');
-      console.log('🏋️  MONSTER GYM - DESPLIEGUE EN PRODUCCIÓN');
-      console.log('🚀 ==========================================');
-      console.log(`📡 Servidor corriendo en puerto: ${PORT}`);
-      console.log(`🗄️  Base de datos: Neon.tech PostgreSQL`);
-      console.log(`🌍 Frontend: https://tu-app.railway.app`);
-      console.log(`📊 API: https://tu-app.railway.app/api`);
-      console.log('✅ ==========================================');
-    });
-  } catch (error) {
-    console.error('❌ Error iniciando servidor:', error);
-    process.exit(1);
-  }
-};
-
-startServer();
+app.listen(PORT, () => {
+  console.log('🚀 ==========================================');
+  console.log('🏋️  MONSTER GYM - FUNCIONANDO CORRECTAMENTE');
+  console.log('🚀 ==========================================');
+  console.log(`📡 Servidor corriendo en puerto: ${PORT}`);
+  console.log(`🌍 Frontend: https://tu-app.render.com`);
+  console.log(`📊 API: https://tu-app.render.com/api`);
+  console.log('✅ ==========================================');
+});
