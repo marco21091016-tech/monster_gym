@@ -681,8 +681,8 @@
         <div class="container">
             <h2 class="section-title">CONTACTO</h2>
             <div class="admin-panel">
-                <p><strong>Dirección:</strong> Calle Fitness 123, Ciudad Deportiva</p>
-                <p><strong>Teléfono:</strong> +1 234 567 890</p>
+                <p><strong>Dirección:</strong> zacatepec</p>
+                <p><strong>Teléfono:</strong> +52 734 567 890</p>
                 <p><strong>Email:</strong> info@monstergym.com</p>
                 <p><strong>Horario:</strong> Lunes a Viernes 9:00 - 20:00</p>
             </div>
@@ -920,7 +920,9 @@
 
     <script>
         // Configuración
-        const API_URL = 'http://localhost:3000/api';
+      const API_URL = window.location.hostname === 'localhost' 
+    ? 'http://localhost:10000/api' 
+    : '/api';  // Misma URL en producción
         
         // Estado de la aplicación
         let currentUser = null;
@@ -1816,4 +1818,5 @@
         document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
+
 </html>
